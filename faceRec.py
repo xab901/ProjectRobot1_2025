@@ -1,6 +1,11 @@
 from maix import GPIO, utils
 from fpioa_manager import fm
 from board import board_info
+import time
+import image
+from kpu import KPU
+import gc
+from face_hash import hash_face_feature  # 导入哈希函数
 
 lcd.init()
 sensor.reset()
@@ -60,6 +65,8 @@ def extend_box(x, y, w, h, scale):
     cut_img_h = y2-y1+1
     return x1, y1, cut_img_w, cut_img_h
 
+hashed_ftrs = []  # 存储哈希后的特征
+
 while True:
     gc.collect()
     # print("mem free:",gc.mem_free())
@@ -100,7 +107,11 @@ while True:
             del scores
             if start_processing:
                 record_ftrs.append(feature)
+                # 对特征进行哈希处理
+                hashed_feature = hash_face_feature(feature)
+                hashed_ftrs.append(hashed_feature)
                 print("record_ftrs:%d" % len(record_ftrs))
+                print("hashed_ftrs:%d" % len(hashed_ftrs))
                 start_processing = False
 
             if recog_flag:

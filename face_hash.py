@@ -2,14 +2,18 @@ import hashlib
 
 def hash_face_feature(feature):
     """
-    对人脸特征进行哈希处理
-    :param feature: 人脸特征
-    :return: 哈希后的特征
+    Hashes a face feature vector using SHA-256.
+
+    :param feature: The face feature vector (list or array of numbers).
+    :return: A hexadecimal string representing the hashed feature.
     """
-    # 将特征转换为字节类型
+    # Convert the feature vector to a bytes object
     feature_bytes = bytes(feature)
-    # 创建一个 sha256 哈希对象
+
+    # Create a SHA-256 hash object
     hash_object = hashlib.sha256(feature_bytes)
-    # 获取哈希值的十六进制表示
+
+    # Get the hexadecimal digest of the hash
     hash_hex = hash_object.hexdigest()
+
     return hash_hex

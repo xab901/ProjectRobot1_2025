@@ -1,3 +1,4 @@
+# Import necessary modules for GPIO, utilities, image processing, and KPU inference
 from maix import GPIO, utils
 from fpioa_manager import fm
 from board import board_info
@@ -5,18 +6,21 @@ import time
 import image
 from kpu import KPU
 import gc
-from face_hash import hash_face_feature  # 导入哈希函数
+from face_hash import hash_face_feature  # Import face feature hashing function
 
+# Initialize the LCD display and camera sensor
 lcd.init()
 sensor.reset()
-sensor.set_pixformat(sensor.RGB565)
-sensor.set_framesize(sensor.QVGA)
+sensor.set_pixformat(sensor.RGB565)  # Set pixel format to RGB565
+sensor.set_framesize(sensor.QVGA)    # Set frame size to 320x240
 sensor.skip_frames(time = 100)
 clock = time.clock()
 
+# Prepare a 64x64 image buffer for face feature extraction
 feature_img = image.Image(size=(64,64), copy_to_fb=False)
-feature_img.pix_to_ai()
+feature_img.pix_to_ai()  # Convert to AI-compatible format
 
+# Define face alignment destination points (used for affine transformation)
 FACE_PIC_SIZE = 64
 dst_point =[(int(38.2946 * FACE_PIC_SIZE / 112), int(51.6963 * FACE_PIC_SIZE / 112)),
             (int(73.5318 * FACE_PIC_SIZE / 112), int(51.5014 * FACE_PIC_SIZE / 112)),
@@ -24,11 +28,15 @@ dst_point =[(int(38.2946 * FACE_PIC_SIZE / 112), int(51.6963 * FACE_PIC_SIZE / 1
             (int(41.5493 * FACE_PIC_SIZE / 112), int(92.3655 * FACE_PIC_SIZE / 112)),
             (int(70.7299 * FACE_PIC_SIZE / 112), int(92.2041 * FACE_PIC_SIZE / 112)) ]
 
+# Define anchor boxes for YOLO face detection
 anchor = (0.1075, 0.126875, 0.126875, 0.175, 0.1465625, 0.2246875, 0.1953125, 0.25375, 0.2440625, 0.351875, 0.341875, 0.4721875, 0.5078125, 0.6696875, 0.8984375, 1.099687, 2.129062, 2.425937)
+
+# Load face detection model
 kpu = KPU()
 kpu.load_kmodel("/sd/KPU/yolo_face_detect/face_detect_320x240.kmodel")
-kpu.init_yolo2(anchor, anchor_num=9, img_w=320, img_h=240, net_w=320 , net_h=240 ,layer_w=10 ,layer_h=8, threshold=0.7, nms_value=0.2, classes=1)
+kpu.init_yolo2(anchor, anchor_num=9, img_w=320, img_h=240, net_w=320 ,net_h=240 ,layer_w=10 ,layer_h=8, threshold=0.7, nms_value=0.2, classes=1)
 
+# Load landmark detection model (ld5) and face feature extraction model
 ld5_kpu = KPU()
 print("ready load model")
 ld5_kpu.load_kmodel("/sd/KPU/face_recognization/ld5.kmodel")
@@ -37,21 +45,28 @@ fea_kpu = KPU()
 print("ready load model")
 fea_kpu.load_kmodel("/sd/KPU/face_recognization/feature_extraction.kmodel")
 
+# Configure BOOT key for registering face
 start_processing = False
 BOUNCE_PROTECTION = 50
 
 fm.register(board_info.BOOT_KEY, fm.fpioa.GPIOHS0)
 key_gpio = GPIO(GPIO.GPIOHS0, GPIO.IN)
+
+# Callback for key press interrupt
 def set_key_state(*_):
     global start_processing
     start_processing = True
     time.sleep_ms(BOUNCE_PROTECTION)
+
 key_gpio.irq(set_key_state, GPIO.IRQ_RISING, GPIO.WAKEUP_NOT_SUPPORT)
 
+# Prepare storage for registered features and hashed versions
 record_ftrs = []
+hashed_ftrs = []
 THRESHOLD = 80.5
 recog_flag = False
 
+# Function to slightly expand bounding box to ensure better feature extraction
 def extend_box(x, y, w, h, scale):
     x1_t = x - scale*w
     x2_t = x + w + scale*w
@@ -65,63 +80,75 @@ def extend_box(x, y, w, h, scale):
     cut_img_h = y2-y1+1
     return x1, y1, cut_img_w, cut_img_h
 
-hashed_ftrs = []  # 存储哈希后的特征
-
+# Main loop
 while True:
-    gc.collect()
-    # print("mem free:",gc.mem_free())
-    # print("heap free:",utils.heap_free())
+    gc.collect()  # Garbage collection to free memory
     clock.tick()
-    img = sensor.snapshot()
-    kpu.run_with_output(img)
+    img = sensor.snapshot()  # Capture a frame
+    kpu.run_with_output(img)  # Run face detection
     dect = kpu.regionlayer_yolo2()
     fps = clock.fps()
+    
     if len(dect) > 0:
         for l in dect :
+            # Expand face bounding box
             x1, y1, cut_img_w, cut_img_h= extend_box(l[0], l[1], l[2], l[3], scale=0)
             face_cut = img.cut(x1, y1, cut_img_w, cut_img_h)
             face_cut_128 = face_cut.resize(128, 128)
             face_cut_128.pix_to_ai()
+
+            # Run landmark detection
             out = ld5_kpu.run_with_output(face_cut_128, getlist=True)
             face_key_point = []
             for j in range(5):
-                x = int(KPU.sigmoid(out[2 * j])*cut_img_w + x1)
-                y = int(KPU.sigmoid(out[2 * j + 1])*cut_img_h + y1)
-                face_key_point.append((x,y))
+                x = int(KPU.sigmoid(out[2 * j]) * cut_img_w + x1)
+                y = int(KPU.sigmoid(out[2 * j + 1]) * cut_img_h + y1)
+                face_key_point.append((x, y))
+
+            # Align face to standard position
             T = image.get_affine_transform(face_key_point, dst_point)
             image.warp_affine_ai(img, feature_img, T)
-            feature = fea_kpu.run_with_output(feature_img, get_feature = True)
+
+            # Extract face feature
+            feature = fea_kpu.run_with_output(feature_img, get_feature=True)
             del face_key_point
+
+            # Compare extracted feature with registered ones
             scores = []
             for j in range(len(record_ftrs)):
                 score = kpu.feature_compare(record_ftrs[j], feature)
                 scores.append(score)
+
             if len(scores):
                 max_score = max(scores)
                 index = scores.index(max_score)
                 if max_score > THRESHOLD:
-                    img.draw_string(0, 195, "persion:%d,score:%2.1f" %(index, max_score), color=(0, 255, 0), scale=2)
+                    img.draw_string(0, 195, "person:%d,score:%2.1f" % (index, max_score), color=(0, 255, 0), scale=2)
                     recog_flag = True
                 else:
-                    img.draw_string(0, 195, "unregistered,score:%2.1f" %(max_score), color=(255, 0, 0), scale=2)
+                    img.draw_string(0, 195, "unregistered,score:%2.1f" % (max_score), color=(255, 0, 0), scale=2)
             del scores
+
+            # If BOOT key was pressed, register this face
             if start_processing:
                 record_ftrs.append(feature)
-                # 对特征进行哈希处理
                 hashed_feature = hash_face_feature(feature)
                 hashed_ftrs.append(hashed_feature)
                 print("record_ftrs:%d" % len(record_ftrs))
                 print("hashed_ftrs:%d" % len(hashed_ftrs))
                 start_processing = False
 
+            # Draw face bounding box
             if recog_flag:
-                img.draw_rectangle(l[0],l[1],l[2],l[3], color=(0, 255, 0))
+                img.draw_rectangle(l[0], l[1], l[2], l[3], color=(0, 255, 0))
                 recog_flag = False
             else:
-                img.draw_rectangle(l[0],l[1],l[2],l[3], color=(255, 255, 255))
+                img.draw_rectangle(l[0], l[1], l[2], l[3], color=(255, 255, 255))
+
             del (face_cut_128)
             del (face_cut)
 
-    img.draw_string(0, 0, "%2.1ffps" %(fps), color=(0, 60, 255), scale=2.0)
+    # Display FPS and instructions
+    img.draw_string(0, 0, "%2.1ffps" % (fps), color=(0, 60, 255), scale=2.0)
     img.draw_string(0, 215, "press boot key to regist face", color=(255, 100, 0), scale=2.0)
     lcd.display(img)
